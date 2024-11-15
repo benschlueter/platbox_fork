@@ -1,0 +1,1 @@
+savedcmd_/home/bschlueter/Platbox/PlatboxDrv/linux/driver/modules.order := {   echo /home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.o; :; } > /home/bschlueter/Platbox/PlatboxDrv/linux/driver/modules.order

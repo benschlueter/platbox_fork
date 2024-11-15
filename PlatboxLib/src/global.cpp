@@ -2,7 +2,7 @@
 #include "msr.h"
 
 HANDLE g_hDevice = 0;
-int DEBUG_MODE = 0;
+int DEBUG_MODE = 1;
 
 void debug_print(const char *fmt, ...) {
     if (DEBUG_MODE) {

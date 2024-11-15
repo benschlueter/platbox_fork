@@ -90,7 +90,7 @@ BOOL do_read_msr_for_core(UINT32 core, UINT msr, UINT64 *res) {
 				msr_for_core.msr, msr_for_core.core_id);
 			return FALSE;
 		} 
-		debug_print("-> Core-%d | MSR:[%08x]: %016llx\n", 
+		debug_print("-> Core-%d | MSR:[%08x]: %016llx\n", msr_for_core.core_id,
 			msr_for_core.msr, msr_for_core.result);
 
 		*res = msr_for_core.result;

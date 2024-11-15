@@ -1,0 +1,1 @@
+savedcmd_/home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.ko := ld -r -m elf_x86_64 -z noexecstack --no-warn-rwx-segments --build-id=sha1  -T scripts/module.lds -o /home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.ko /home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.o /home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.mod.o

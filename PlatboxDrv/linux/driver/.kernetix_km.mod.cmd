@@ -1,0 +1,1 @@
+savedcmd_/home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.mod := printf '%s\n'   kernetix.o low_level_functions.o | awk '!x[$$0]++ { print("/home/bschlueter/Platbox/PlatboxDrv/linux/driver/"$$0) }' > /home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.mod

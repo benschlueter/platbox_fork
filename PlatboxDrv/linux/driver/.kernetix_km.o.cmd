@@ -1,0 +1,1 @@
+savedcmd_/home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.o := ld -m elf_x86_64 -z noexecstack --no-warn-rwx-segments   -r -o /home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.o @/home/bschlueter/Platbox/PlatboxDrv/linux/driver/kernetix_km.mod 
