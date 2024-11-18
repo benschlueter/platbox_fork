@@ -105,6 +105,7 @@ typedef struct _SW_SMI_CALL {
 } SW_SMI_CALL, *PSW_SMI_CALL;
 
 void _swsmi(SW_SMI_CALL *smi_call);
+void _load_gdt(void *gdtr_ptr);
 
 void _store_savestate(void *base_address);
 

@@ -10,7 +10,7 @@
 %define SQUIRREL_BAR 			0xd0800000
 %define CORE0_INITIAL_STACK		0x1E00
 %define CORE0_PAGE_TABLE_BASE   0x2000
-%define CORE0_NEXT_STAGE        0x1035
+%define CORE0_NEXT_STAGE        0x35
 
 %define X64_STAGING_FUNC_VA		0xfffff6fb7dbee000
 %define X64_STAGING_RSP			0xfffff6fb7dbef000
@@ -49,7 +49,8 @@ o16 mov     ss, ax
 	push    PROTECT_MODE_CS             
     mov 	eax, CORE0_NEXT_STAGE
 	push 	eax
-	retf
+	; This Retf fails, not sure why
+	;retf
 
 next_stage:
 
@@ -94,9 +95,9 @@ ProtFlatMode:
 	; xor rcx,rcx
 
 	push    LONG_MODE_CS               ; push cs hardcore here
-    call    Base                       ; push return address for retf later
+	call    Base                       ; push return address for retf later
 Base:
-   	add     dword [rsp], @LongMode - Base
+	add     dword [rsp], @LongMode - Base
 
 	mov rax, [rsp]
 
@@ -106,7 +107,8 @@ Base:
     wrmsr
     mov     rbx, cr0
     or      ebx, 0x80010023            ; enable paging + WP + NE + MP + PE
-    mov     cr0, rbx
+	rsm
+	mov     cr0, rbx
 
 	; mov rcx, SQUIRREL_BAR
 	; lea rcx, [rcx + 0x4]

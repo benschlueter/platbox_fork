@@ -13,9 +13,13 @@ global _store_savestate
 global _cli
 global _sti
 global _swsmi_sinkclose
+global _load_gdt
 
 section .text
 
+_load_gdt:
+    lgdt [rdi]
+    ret
 
 _store_savestate:
 ; 0x3200 -> RIP
