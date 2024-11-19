@@ -1,1 +1,1 @@
-savedcmd_/home/bschlueter/Platbox/PlatboxDrv/linux/driver/Module.symvers :=  scripts/mod/modpost -M -m -a      -o /home/bschlueter/Platbox/PlatboxDrv/linux/driver/Module.symvers -T /home/bschlueter/Platbox/PlatboxDrv/linux/driver/modules.order -i Module.symvers -e 
+savedcmd_/home/benedict/platbox_fork/PlatboxDrv/linux/driver/Module.symvers :=  scripts/mod/modpost -M -m -a      -o /home/benedict/platbox_fork/PlatboxDrv/linux/driver/Module.symvers -T /home/benedict/platbox_fork/PlatboxDrv/linux/driver/modules.order -i Module.symvers -e 

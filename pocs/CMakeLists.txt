@@ -6,15 +6,14 @@ cmake_minimum_required(VERSION 3.13)
 # as Visual Studio projects (.vcproj)
 project (pocs)
 
-if (UNIX)     
-    enable_language(C ASM_NASM)    
+if (UNIX)
+    enable_language(C ASM)    
     # Add the assembly file to the library
-    add_library(sinkclose_lib STATIC AmdSinkclose/sinkclose.s) 
-    set_source_files_properties(
-        AmdSinkclose/sinkclose.s 
-        PROPERTIES LANGUAGE ASM_NASM
-    )
+    add_library(sinkclose_lib STATIC AmdSinkclose/sinkclose.S) 
+    # Optionally add GCC-specific flags (e.g., to use Intel syntax)
+    #target_compile_options(sinkclose_lib PRIVATE -masm=intel)
 endif (UNIX)
+
 
 if (WIN32)
     enable_language(ASM_NASM)

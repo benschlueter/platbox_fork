@@ -49,7 +49,7 @@ static int kernetix_ndevices = 1;
 static PKERNETIX_DEVICE kernetix_device = NULL;
 static struct class *device_class = NULL;
 
-#define CORENUM 16
+#define CORENUM 64
 #define SINKCLOSE_CORE1_RECOVER_PHYSICAL_ADDR 0x3000
 #define CORE1_FAKE_STATE_AREA 0x200
 static void *sinkclose_core1_recover_vaddr;

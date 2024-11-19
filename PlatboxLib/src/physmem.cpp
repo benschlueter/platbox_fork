@@ -57,6 +57,7 @@ void unmap_physical_memory_unaligned(void *ptr, UINT32 size) {
 
 void unmap_physical_memory(void *ptr, UINT32 size) {
 
+	return;
 	#ifdef __linux__
 		munmap(ptr, size);		
 	#elif _WIN32			
